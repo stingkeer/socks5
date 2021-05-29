@@ -132,7 +132,7 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 		s.config.Resolver = DNSResolver{}
 	}
 
-	_, targetUDPAddr, err := s.config.Resolver.Resolve(context.Background(), targetAddrSpec.Address())
+	_, targetUDPAddr, err := s.config.Resolver.Resolve(context.Background(), targetAddrSpec.IP.String())
 	if err != nil {
 		err := fmt.Errorf("failed to resolve destination UDP Addr '%v': %v", targetAddrSpec.Address(), err)
 		return err
@@ -142,7 +142,8 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 			return net.Dial(net_, addr)
 		}
 	}
-	target, err := s.config.Dial(context.Background(), "udp", targetUDPAddr.String())
+
+	target, err := s.config.Dial(context.Background(), "udp", fmt.Sprintf("%s:%d", targetUDPAddr.String(), targetAddrSpec.Port))
 	if err != nil {
 		err = fmt.Errorf("connect to %v failed: %v", targetUDPAddr, err)
 		s.config.Logger.Printf("udp socks: %+v", err)
