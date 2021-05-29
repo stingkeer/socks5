@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -127,12 +128,21 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 	}
 
 	// make a writer and write to dst
-	targetUDPAddr, err := net.ResolveUDPAddr("udp", targetAddrSpec.Address())
+	if s.config.Resolver == nil {
+		s.config.Resolver = DNSResolver{}
+	}
+
+	_, targetUDPAddr, err := s.config.Resolver.Resolve(context.Background(), targetAddrSpec.Address())
 	if err != nil {
 		err := fmt.Errorf("failed to resolve destination UDP Addr '%v': %v", targetAddrSpec.Address(), err)
 		return err
 	}
-	target, err := net.DialUDP("udp", udpClientSrcAddr, targetUDPAddr)
+	if s.config.Dial == nil {
+		s.config.Dial = func(ctx context.Context, net_, addr string) (net.Conn, error) {
+			return net.Dial(net_, addr)
+		}
+	}
+	target, err := s.config.Dial(context.Background(), "udp", targetUDPAddr.String())
 	if err != nil {
 		err = fmt.Errorf("connect to %v failed: %v", targetUDPAddr, err)
 		s.config.Logger.Printf("udp socks: %+v", err)
