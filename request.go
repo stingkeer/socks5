@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -235,18 +236,36 @@ func (s *Server) handleConnect(ctx context.Context, conn net.Conn, req *Request)
 		return fmt.Errorf("failed to send reply: %v", err)
 	}
 
-	// Start proxying
-	errCh := make(chan error, 2)
-	go proxy(target, req.bufConn, errCh)
-	go proxy(conn, target, errCh)
-
-	// Wait
-	for i := 0; i < 2; i++ {
-		e := <-errCh
-		if e != nil {
-			// return from this function closes target (and conn).
-			return e
+	//copy
+	if s.config.Copier == nil {
+		s.config.Copier = func(context context.Context, dst io.Writer, src io.Reader) (written int64, err error) {
+			return io.Copy(dst, src)
 		}
+	}
+	var g sync.WaitGroup
+	g.Add(2)
+
+	var nErr error
+	go func() {
+		_, err := s.config.Copier(ctx, target, req.bufConn)
+		if err != nil {
+			nErr = err
+		}
+		g.Done()
+	}()
+
+	go func() {
+		_, err := s.config.Copier(ctx, conn, target)
+		if err != nil {
+			nErr = err
+		}
+		g.Done()
+	}()
+
+	g.Wait()
+
+	if nErr != nil {
+		return nErr
 	}
 	return nil
 }
@@ -295,7 +314,7 @@ func (s *Server) handleAssociate(ctx context.Context, conn net.Conn, req *Reques
 
 	// wait here till the client close the connection
 	// check every 10 secs
-	tmp := []byte{}
+	var tmp []byte
 	var neverTimeout time.Time
 	for {
 		conn.SetReadDeadline(time.Now())

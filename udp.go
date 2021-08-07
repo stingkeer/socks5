@@ -1,3 +1,7 @@
+/**
+* https://datatracker.ietf.org/doc/html/rfc1928
+ */
+
 package socks5
 
 import (
@@ -8,7 +12,7 @@ import (
 	"sync"
 )
 
-const maxUDPPacketSize = 2 * 1024
+const maxUDPPacketSize = 1024 * 1024
 
 var udpClientSrcAddr = &net.UDPAddr{IP: net.IPv4zero, Port: 0}
 
@@ -54,6 +58,17 @@ func (s *Server) handleUDP(udpConn *net.UDPConn) {
     +----+------+------+----------+----------+----------+
     | 2  |  1   |  1   | Variable |    2     | Variable |
     +----+------+------+----------+----------+----------+
+    The fields in the UDP request header are:
+
+     o  RSV  Reserved X'0000'
+     o  FRAG    Current fragment number
+     o  ATYP    address type of following addresses:
+        o  IP V4 address: X'01'
+        o  DOMAINNAME: X'03'
+        o  IP V6 address: X'04'
+     o  DST.ADDR       desired destination address
+     o  DST.PORT       desired destination port
+     o  DATA     user data
 **********************************************************/
 
 // ErrUDPFragmentNoSupported UDP fragments not supported error
@@ -93,13 +108,13 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 	targetAddrRawSize = 1
 	switch targetAddrRaw[0] {
 	case AddressIPv4:
-		targetAddrSpec.IP = net.IP(targetAddrRaw[targetAddrRawSize : targetAddrRawSize+4])
+		targetAddrSpec.IP = targetAddrRaw[targetAddrRawSize : targetAddrRawSize+4]
 		targetAddrRawSize += 4
 	case AddressIPv6:
 		if len(targetAddrRaw) < 1+16+2 {
 			return errShortAddrRaw()
 		}
-		targetAddrSpec.IP = net.IP(targetAddrRaw[1 : 1+16])
+		targetAddrSpec.IP = targetAddrRaw[1 : 1+16]
 		targetAddrRawSize += 16
 	case AddressDomainName:
 		addrLen := int(targetAddrRaw[1])
@@ -107,7 +122,7 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 			return errShortAddrRaw()
 		}
 		targetAddrSpec.FQDN = string(targetAddrRaw[1+1 : 1+1+addrLen])
-		targetAddrRawSize += (1 + addrLen)
+		targetAddrRawSize += 1 + addrLen
 	default:
 		s.config.Logger.Printf("udp socks: Failed to get UDP package header: %v", errUnrecognizedAddrType)
 		return errUnrecognizedAddrType
@@ -132,7 +147,7 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 		s.config.Resolver = DNSResolver{}
 	}
 
-	_, targetUDPAddr, err := s.config.Resolver.Resolve(context.Background(), targetAddrSpec.IP.String())
+	dnsContext, targetUDPAddr, err := s.config.Resolver.Resolve(context.Background(), targetAddrSpec.IP.String())
 	if err != nil {
 		err := fmt.Errorf("failed to resolve destination UDP Addr '%v': %v", targetAddrSpec.Address(), err)
 		return err
@@ -143,7 +158,7 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 		}
 	}
 
-	target, err := s.config.Dial(context.Background(), "udp", fmt.Sprintf("%s:%d", targetUDPAddr.String(), targetAddrSpec.Port))
+	target, err := s.config.Dial(dnsContext, "udp", fmt.Sprintf("%s:%d", targetUDPAddr.String(), targetAddrSpec.Port))
 	if err != nil {
 		err = fmt.Errorf("connect to %v failed: %v", targetUDPAddr, err)
 		s.config.Logger.Printf("udp socks: %+v", err)
@@ -157,6 +172,7 @@ func (s *Server) serveUDPConn(udpPacket []byte, reply func([]byte) error) error 
 			targetUDPAddr.String(), err)
 		return err
 	}
+
 	respBuffer := getUDPPacketBuffer()
 	defer putUDPPacketBuffer(respBuffer)
 	copy(respBuffer[0:len(header)], header)

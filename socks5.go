@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -55,6 +56,8 @@ type Config struct {
 
 	// Optional function for dialing out
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+
+	Copier func(context context.Context, dst io.Writer, src io.Reader) (written int64, err error)
 }
 
 // Server is responsible for accepting connections and handling
@@ -181,7 +184,7 @@ func (s *Server) ServeConn(conn net.Conn) error {
 
 	// Process the client request
 	if err := s.handleRequest(request, conn); err != nil {
-		err = fmt.Errorf("failed to handle request: %v", err)
+		err = fmt.Errorf("failed to handle request [%s]: %v", request.DestAddr.String(), err)
 		s.config.Logger.Printf("socks: %v", err)
 		return err
 	}
